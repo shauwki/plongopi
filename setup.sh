@@ -699,13 +699,9 @@ scene: !include scenes.yaml
 http:
   use_x_forwarded_for: true
   trusted_proxies:
-    - 172.20.0.0/16
     - 172.18.0.0/16
-    - 172.18.0.12
-    - 172.18.0.6
-    - 172.18.0.7
-    - 172.18.0.4
-    - 172.18.0.3
+    - 172.19.0.0/16
+    - 172.20.0.0/16
 EOF
 echo "-> ./automation/homeassistant/configuration.yaml aangemaakt."
 
