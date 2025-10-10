@@ -3,14 +3,11 @@ set -e
 
 backup_n8n() {
     echo "--- 💾 n8n Backup Modus ---"
-    
-    # Maak een map aan met de huidige datum en tijd voor deze backup
     local backup_dir="./backups/n8n/$(date +%F_%H-%M-%S)"
     mkdir -p "$backup_dir"
-    
-    echo "-> Backup map aangemaakt: $backup_dir"
-
-    # Definieer het pad binnen de container
+    echo "-> Backup map aangemaakt op host: $backup_dir"
+    sudo chown -R 1000:1000 "$backup_dir"
+    echo "-> Permissies voor backup map correct ingesteld."
     local container_path="/home/node/backups/$(basename "$backup_dir")"
 
     echo "-> Workflows exporteren..."
@@ -22,7 +19,8 @@ backup_n8n() {
     echo "--> Credentials succesvol geëxporteerd."
 
     echo "-> Encryption Key veiligstellen..."
-    cp ./automation/n8n/config/encryptionKey "${backup_dir}/encryptionKey.json"
+
+    cp ./automation/n8n/config/config "${backup_dir}/encryptionKey.json"
     echo "--> Encryption Key succesvol gekopieerd."
 
     echo ""
@@ -55,20 +53,20 @@ restore_n8n() {
         fi
 
         echo "-> Stoppen van de n8n container voor een veilige restore..."
-        docker compose stop plongo_n8n
+        docker compose stop n8n
 
         echo "-> Encryption Key herstellen..."
-        cp "$key_file" ./automation/n8n/config/encryptionKey
+        cp "$key_file" ./automation/n8n/config/config
         echo "--> Encryption Key geplaatst."
         
         # Stel permissies opnieuw in
-        sudo chown 1000:1000 ./automation/n8n/config/encryptionKey
-        sudo chmod 600 ./automation/n8n/config/encryptionKey
+        sudo chown 1000:1000 ./automation/n8n/config/config
+        sudo chmod 600 ./automation/n8n/config/config
 
         echo "-> Starten van n8n om data te importeren..."
-        docker compose up -d plongo_n8n
+        docker compose up -d n8n --force-recreate
         echo "--> Wachten tot n8n volledig is gestart (kan even duren)..."
-        sleep 15 # Geef n8n even de tijd om op te warmen
+        sleep 15
 
         local container_path="/home/node/backups/$(basename "$latest_backup")"
 
@@ -80,7 +78,7 @@ restore_n8n() {
 
         echo ""
         echo "--- ✅ Restore voltooid! ---"
-        docker compose restart plongo_n8n # Herstart voor de zekerheid
+        # docker compose restart n8n ?
     else
         echo "Restore geannuleerd."
     fi
@@ -187,7 +185,7 @@ case "$1" in
         restore_n8n
         exit 0
         ;;
-    -r)
+    --reset)
         if [ -z "$2" ]; then
         # Als alleen "-r" wordt gegeven, voer een volledige reset uit
         reset_full_project
@@ -710,6 +708,7 @@ echo "-> ./automation/homeassistant/configuration.yaml aangemaakt."
 
 # --- De rest van je script ---
 echo "[3/4] Correcte permissies instellen..."
+sudo chown -R 1000:1000 ./backups/n8n
 sudo chown -R 1000:1000 ./automation/n8n/
 sudo chown -R 1000:1000 ./apps/obsidian/
 sudo chown -R 33:33 ./apps/web/public/html/ 
