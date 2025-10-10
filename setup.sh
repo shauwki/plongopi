@@ -1,6 +1,91 @@
 #!/bin/bash
 set -e
 
+backup_n8n() {
+    echo "--- 💾 n8n Backup Modus ---"
+    
+    # Maak een map aan met de huidige datum en tijd voor deze backup
+    local backup_dir="./backups/n8n/$(date +%F_%H-%M-%S)"
+    mkdir -p "$backup_dir"
+    
+    echo "-> Backup map aangemaakt: $backup_dir"
+
+    # Definieer het pad binnen de container
+    local container_path="/home/node/backups/$(basename "$backup_dir")"
+
+    echo "-> Workflows exporteren..."
+    docker exec -u node plongo_n8n n8n export:workflow --all --output="${container_path}/workflows.json"
+    echo "--> Workflows succesvol geëxporteerd."
+
+    echo "-> Credentials (versleuteld) exporteren..."
+    docker exec -u node plongo_n8n n8n export:credentials --all --output="${container_path}/credentials.json"
+    echo "--> Credentials succesvol geëxporteerd."
+
+    echo "-> Encryption Key veiligstellen..."
+    cp ./automation/n8n/config/encryptionKey "${backup_dir}/encryptionKey.json"
+    echo "--> Encryption Key succesvol gekopieerd."
+
+    echo ""
+    echo "--- ✅ Backup voltooid! Bestanden staan in: $backup_dir ---"
+}
+
+restore_n8n() {
+    echo "--- 🔄 n8n Restore Modus ---"
+
+    # Vind de meest recente backup-map
+    local latest_backup=$(ls -td ./backups/n8n/*/ | head -n 1)
+
+    if [ -z "$latest_backup" ]; then
+        echo "❌ Fout: Geen backup-mappen gevonden in ./backups/n8n/"
+        exit 1
+    fi
+
+    echo "Meest recente backup gevonden: $latest_backup"
+    read -p "Weet je zeker dat je wilt herstellen vanaf deze backup? Huidige workflows/credentials worden mogelijk overschreven. (y/n) " -n 1 -r
+    echo
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        local key_file="${latest_backup}encryptionKey.json"
+        local workflows_file="${latest_backup}workflows.json"
+        local credentials_file="${latest_backup}credentials.json"
+
+        if [ ! -f "$key_file" ]; then
+            echo "❌ Fout: encryptionKey.json niet gevonden in de backup. Herstellen is onmogelijk."
+            exit 1
+        fi
+
+        echo "-> Stoppen van de n8n container voor een veilige restore..."
+        docker compose stop plongo_n8n
+
+        echo "-> Encryption Key herstellen..."
+        cp "$key_file" ./automation/n8n/config/encryptionKey
+        echo "--> Encryption Key geplaatst."
+        
+        # Stel permissies opnieuw in
+        sudo chown 1000:1000 ./automation/n8n/config/encryptionKey
+        sudo chmod 600 ./automation/n8n/config/encryptionKey
+
+        echo "-> Starten van n8n om data te importeren..."
+        docker compose up -d plongo_n8n
+        echo "--> Wachten tot n8n volledig is gestart (kan even duren)..."
+        sleep 15 # Geef n8n even de tijd om op te warmen
+
+        local container_path="/home/node/backups/$(basename "$latest_backup")"
+
+        echo "-> Credentials importeren..."
+        docker exec -u node plongo_n8n n8n import:credentials --input="${container_path}/credentials.json"
+
+        echo "-> Workflows importeren..."
+        docker exec -u node plongo_n8n n8n import:workflow --input="${container_path}/workflows.json"
+
+        echo ""
+        echo "--- ✅ Restore voltooid! ---"
+        docker compose restart plongo_n8n # Herstart voor de zekerheid
+    else
+        echo "Restore geannuleerd."
+    fi
+}
+
 # --- FUNCTIE OM EEN SPECIFIEKE SERVICE TE RESETTEN ---
 reset_service() {
     local service_name=$1
@@ -93,21 +178,31 @@ reset_full_project() {
     fi
 }
 
-# --- HOOFDLOGICA VAN HET SCRIPT ---
-if [ "$1" == "-r" ]; then
-    if [ -z "$2" ]; then
+case "$1" in
+    --backup)
+        backup_n8n
+        exit 0
+        ;;
+    --restore)
+        restore_n8n
+        exit 0
+        ;;
+    -r)
+        if [ -z "$2" ]; then
         # Als alleen "-r" wordt gegeven, voer een volledige reset uit
         reset_full_project
-    else
-        # Als "-r <servicenaam>" wordt gegeven, voer een gerichte reset uit
-        reset_service "$2"
-    fi
-    exit 0
-fi
-
+        else
+            # Als "-r <servicenaam>" wordt gegeven, voer een gerichte reset uit
+            reset_service "$2"
+        fi
+        exit 0
+        ;;
+esac
 
 echo "--- Plongo Setup Script ---"
 echo "[1/4] Benodigde mappen aanmaken..."
+mkdir -p ./backups/n8n
+mkdir -p ./backups/db
 mkdir -p ./database
 mkdir -p ./automation/n8n/config
 mkdir -p ./automation/mqtt/config
