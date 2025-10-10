@@ -26,7 +26,7 @@ services:
       - ./database/data:/var/lib/postgresql/data
       - ./database/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
     networks:
-      - nulltick-network
+      - plongo-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -38,7 +38,7 @@ services:
     container_name: plongo_redis
     restart: unless-stopped
     networks:
-      - nulltick-network
+      - plongo-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -61,7 +61,7 @@ services:
       - ./automation/mqtt/data:/mosquitto/data
       - ./automation/mqtt/log:/mosquitto/log
     networks:
-      - nulltick-network
+      - plongo-network
 
   # ===================================================================
   #  2. APPLICATIES (De hoofdapplicaties van je stack)
@@ -100,7 +100,7 @@ services:
       - ./automation/n8n/config:/home/node/.n8n
       - ./backups/n8n:/home/node/backups
     networks:
-      - nulltick-network
+      - plongo-network
 
   nextcloud:
     image: nextcloud:apache
@@ -127,7 +127,7 @@ services:
       - ./apps/nextcloud/data:/var/www/html/data # verander het naar deze regel als je de data in de omgeving wilt houden
       # - /root/devki/nextcloud:/var/www/html/data # kan anders path zijn voor jou
     networks:
-      - nulltick-network
+      - plongo-network
 
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable
@@ -137,7 +137,7 @@ services:
       - ./automation/homeassistant:/config
       - /etc/localtime:/etc/localtime:ro
     networks:
-      - nulltick-network
+      - plongo-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8123"]
       interval: 30s
@@ -157,7 +157,7 @@ services:
     environment:
       - OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}
     networks:
-      - nulltick-network
+      - plongo-network
 
   web:
     build: ./apps/web
@@ -166,7 +166,7 @@ services:
     volumes:
       - ./apps/web/public/html:/var/www/html
     networks:
-      - nulltick-network
+      - plongo-network
 
   # ===================================================================
   #  4. TOOLS & SUPPORTING SERVICES
@@ -180,7 +180,7 @@ services:
     volumes:
       - ./database/chroma:/chroma/.chroma/index
     networks:
-      - nulltick-network
+      - plongo-network
 
   adminer:
     image: adminer
@@ -189,7 +189,7 @@ services:
     ports:
       - "8080:8080"
     networks:
-      - nulltick-network
+      - plongo-network
     depends_on:
       database:
         condition: service_healthy
@@ -203,9 +203,9 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN} 
     networks:
-      - nulltick-network
+      - plongo-network
 
 networks:
-  nulltick-network:
-    name: nulltick-network
+  plongo-network:
+    name: plongo-network
     
