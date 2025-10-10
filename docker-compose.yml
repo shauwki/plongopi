@@ -82,7 +82,7 @@ services:
       - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
       - NODE_OPTIONS=--max-old-space-size=2048
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      - NON_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
       - N8N_HOST=${N8N_URL}
       - N8N_PROTOCOL=https
       - NODE_ENV=production
@@ -98,6 +98,7 @@ services:
         condition: service_healthy
     volumes:
       - ./automation/n8n/config:/home/node/.n8n
+      - ./backups/n8n:/home/node/backups
     networks:
       - nulltick-network
 
@@ -138,7 +139,6 @@ services:
     networks:
       - nulltick-network
     healthcheck:
-      # Controleert of de Home Assistant frontend laadt.
       test: ["CMD", "curl", "-f", "http://localhost:8123"]
       interval: 30s
       timeout: 10s
