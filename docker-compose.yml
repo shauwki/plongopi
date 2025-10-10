@@ -123,8 +123,8 @@ services:
         condition: service_healthy
     volumes:
       - ./apps/nextcloud/html:/var/www/html
-      # - ./apps/nextcloud/data:/var/www/html/data # verander het naar deze regel als je de data in de omgeving wilt houden
-      - /root/devki/nextcloud:/var/www/html/data # kan anders path zijn voor jou
+      - ./apps/nextcloud/data:/var/www/html/data # verander het naar deze regel als je de data in de omgeving wilt houden
+      # - /root/devki/nextcloud:/var/www/html/data # kan anders path zijn voor jou
     networks:
       - nulltick-network
 
