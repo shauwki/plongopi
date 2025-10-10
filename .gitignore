@@ -1,36 +1,70 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# local env files
-.env*.local
+# ===================================================================
+#  ALGEMENE BESTANDEN & GEHEIMEN
+# ===================================================================
+# Negeer het .env bestand met geheimen, maar behoud het voorbeeld.
 .env
+!example.env
 
-# vercel
-.vercel
+# Negeer PHP dependency manager bestanden
+composer.phar
+composer.lock
+/vendor/
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# ===================================================================
+#  DATA & RUNTIME BESTANDEN
+# ===================================================================
+# Mappen die door applicaties worden gevuld tijdens het draaien.
+
+# --- DATABASE ---
+# Negeer de daadwerkelijke data- en indexmappen van de databases.
+# Het init-script wordt NIET genegeerd en blijft in de repository.
+database/data/
+database/chroma/
+
+# --- AUTOMATION ---
+# Negeer n8n runtime configuratie en de gekoppelde database data.
+automation/n8n/config/
+
+# Voor MQTT, negeer alles in de config-map BEHALVE mosquitto.conf.
+# Negeer ook de data- en log-mappen.
+automation/mqtt/config/*
+!automation/mqtt/config/mosquitto.conf
+automation/mqtt/data/
+automation/mqtt/log/
+
+# --- APPS ---
+# Negeer de map waar de webserver bestanden plaatst (zoals uploads).
+# De broncode in apps/web/src/ wordt wel meegenomen.
+apps/web/public/html/
+
+# Negeer de volledige Nextcloud installatie; alleen de docker-compose.yml is nodig.
+# Gebruikersdata wordt via een apart volume gemount en hoort niet in de repo.
+apps/nextcloud/html/
+
+# Negeer de persoonlijke notities in Obsidian, maar behoud de applicatiecode.
+apps/obsidian/notes/
+
+# Voor Home Assistant, negeer alles (*) en maak uitzonderingen (!)
+# voor de configuratiebestanden die je wilt bewaren.
+apps/homeassistant/*
+# !apps/homeassistant/configuration.yaml
+# !apps/homeassistant/automations.yaml
+# !apps/homeassistant/scenes.yaml
+# !apps/homeassistant/scripts.yaml
+# !apps/homeassistant/custom_components/
+# (Haal commentaar weg voor bestanden/mappen die je wilt bewaren i guess?)
+
+
+# ===================================================================
+#  OPTIONELE APPLICATIES (voorbeeld)
+# ===================================================================
+
+# --- JELLYFIN ---
+# Negeer de media cache en de runtime configuratie.
+jellyfin/cache/
+jellyfin/config/
+
+# --- OLLAMA ---
+# Negeer gedownloade AI-modellen en data.
+ollama/models/
+ollama_data/

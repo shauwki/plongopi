@@ -1,0 +1,193 @@
+services:
+  # --- DATABASE STUFF ---
+  database:
+    image: pgvector/pgvector:pg15
+    container_name: plongo_database
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - CORE_USER_NAME=${CORE_USER_NAME}
+      - CORE_USER_PASSWORD=${CORE_USER_PASSWORD}
+      - CORE_MEMORY_DB_NAME=${CORE_MEMORY_DB_NAME}
+      - N8N_DB_USER=${N8N_DB_USER}
+      - N8N_DB_PASSWORD=${N8N_DB_PASSWORD}
+      - N8N_DB_NAME=${N8N_DB_NAME}
+      - NEXTCLOUD_DB_USER=${NEXTCLOUD_DB_USER}
+      - NEXTCLOUD_DB_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
+      - NEXTCLOUD_DB_NAME=${NEXTCLOUD_DB_NAME}
+      - AI_AGENTS_DB_USER=${AI_AGENTS_DB_USER}
+      - AI_AGENTS_DB_PASSWORD=${AI_AGENTS_DB_PASSWORD}
+      - AI_AGENTS_DB_NAME=${AI_AGENTS_DB_NAME}
+    volumes:
+      - ./database/data:/var/lib/postgresql/data
+      - ./database/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
+    networks:
+      - nulltick-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  chromadb:
+    image: chromadb/chroma
+    container_name: plongo_chromadb
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./database/chroma:/chroma/.chroma/index
+    networks:
+      - nulltick-network
+  
+  adminer:
+    image: adminer
+    container_name: plongo_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - nulltick-network
+    depends_on:
+      - database
+
+  mqtt:
+    image: eclipse-mosquitto:latest
+    container_name: plongo_mqtt
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./automation/mqtt/config:/mosquitto/config
+      - ./automation/mqtt/data:/mosquitto/data
+      - ./automation/mqtt/log:/mosquitto/log
+    networks:
+      - nulltick-network
+  # --- CORE STUFF ---
+
+  # --- AI & AUTOMATISERING ---
+  n8n:
+    image: n8nio/n8n
+    container_name: plongo_n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=database
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_NAME}
+      - DB_POSTGRESDB_USER=${N8N_DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      - NODE_OPTIONS=--max-old-space-size=2048
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - NON_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+      - N8N_HOST=${N8N_URL}
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - GENERIC_TIMEZONE=${TZ}
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_TRUSTED_PROXIES=cloudflared
+      - N8N_PROXY_HOPS=1
+      - N8N_RUNNERS_ENABLED=true
+      - EXPRESS_TRUST_PROXY=true
+      - WEBHOOK_URL=https://${N8N_URL}
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - ./automation/n8n/config:/home/node/.n8n
+    networks:
+      - nulltick-network
+
+  # --- APPLICATIES ---
+  nextcloud:
+    image: nextcloud:apache
+    container_name: plongo_nextcloud
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - POSTGRES_HOST=database
+      - POSTGRES_DB=${NEXTCLOUD_DB_NAME}
+      - POSTGRES_USER=${NEXTCLOUD_DB_USER}
+      - POSTGRES_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_URL}
+      - OVERWRITEHOST=${NEXTCLOUD_URL}
+      - OVERWRITEPROTOCOL=https
+      - REDIS_HOST=redis
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./apps/nextcloud/html:/var/www/html
+      # - ./apps/nextcloud/data:/var/www/html/data # verander het naar deze regel als je de data in de omgeving wilt houden
+      - /root/devki/nextcloud:/var/www/html/data # kan anders path zijn voor jou
+    networks:
+      - nulltick-network
+  redis:
+    image: redis:alpine
+    container_name: plongo_redis
+    restart: unless-stopped
+    networks:
+      - nulltick-network
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: plongo_homeassistant
+    restart: unless-stopped
+    volumes:
+      - ./apps/homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - nulltick-network
+
+  obsidian:
+    build: ./apps/obsidian
+    restart: unless-stopped
+    # ports:
+    #   - "5001:5000"
+    volumes:
+      - ./apps/obsidian:/notes
+    environment:
+      - OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}
+    networks:
+      - nulltick-network
+
+  web:
+    build: ./apps/web
+    container_name: plongo_website
+    restart: unless-stopped
+    volumes:
+      - ./apps/web/public/html:/var/www/html
+    networks:
+      - nulltick-network
+
+  # --- NETWERK & TOEGANG ---
+  # (enige stuk niet offline, met dit token wordt de tunnel gekoppeld aan je online cloudflared account voor 'veilige' remote access)
+  # Alles wat je in cloudflared zet is bereikbaar via https://jouwdomein.com/servicenaam (bijv. n8n.jouwdomein.com)
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: plongo_cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN} 
+    depends_on:
+      - n8n
+      - nextcloud
+      - homeassistant
+    networks:
+      - nulltick-network
+
+networks:
+  nulltick-network:
+    name: nulltick-network
