@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="nl" class="h-full bg-gray-900">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Obsidian Web Notes</title>
+
+    <meta name="description" content="Een webinterface voor het beheren van notities in een Obsidian kluis.">
+    <meta name="author" content="Plongo">
+
+    <meta name="theme-color" content="#111827"> <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📝</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📝</text></svg>">
+
+    <meta property="og:title" content="Obsidian Web Notes">
+    <meta property="og:description" content="Een webinterface voor het beheren van notities.">
+    <meta property="og:type" content="website">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="h-full text-gray-200 antialiased">
+    <div class="relative min-h-screen md:flex">
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black bg-opacity-50 z-20 hidden md:hidden"></div>
+        
+        <aside id="sidebar" class="fixed inset-y-0 left-0 z-30 w-full max-w-xs transform -translate-x-full transition-transform duration-300 ease-in-out bg-gray-800 p-4 border-r border-gray-700 flex flex-col md:relative md:w-1/4 md:translate-x-0">
+            <div class="flex justify-between items-center mb-4">
+                <h1 class="text-2xl font-bold">Mijn Notities</h1>
+                <button id="closeSidebarBtn" class="md:hidden text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="mb-4">
+                <input type="password" id="apiKey" placeholder="Plak API Key hier" class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div id="file-tree" class="flex-grow overflow-y-auto"></div>
+            <button id="newNoteBtn" class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                Nieuwe Notitie
+            </button>
+        </aside>
+
+        <main class="w-full flex flex-col md:w-3/4">
+            <div id="editor-container" class="flex-grow p-2 sm:p-4 flex flex-col hidden">
+                <div class="flex justify-between items-center mb-2">
+                    <div class="flex items-center">
+                         <button id="menuBtn" class="md:hidden mr-2 p-1 text-gray-400 hover:text-white">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                        </button>
+                        <span id="current-note-path" class="text-gray-400 text-sm truncate"></span>
+                    </div>
+                    <div>
+                        <button id="saveBtn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-1 px-3 rounded text-sm">Opslaan</button>
+                        <button id="deleteBtn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm ml-2">Verwijderen</button>
+                    </div>
+                </div>
+                <textarea id="note-content" class="w-full flex-grow bg-gray-900 text-gray-200 p-2 sm:p-4 rounded border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"></textarea>
+            </div>
+            <div id="welcome-message" class="flex-grow flex flex-col items-center justify-center p-4">
+                 <button id="menuBtnWelcome" class="md:hidden absolute top-4 left-4 p-1 text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+                <p class="text-gray-500">Selecteer een notitie om te beginnen of maak een nieuwe aan.</p>
+            </div>
+        </main>
+    </div>
+
+<script>
+    // --- ELEMENTEN SELECTEREN ---
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+    const menuBtn = document.getElementById('menuBtn');
+    const menuBtnWelcome = document.getElementById('menuBtnWelcome');
+    const closeSidebarBtn = document.getElementById('closeSidebarBtn');
+    
+    const apiKeyInput = document.getElementById('apiKey');
+    const fileTreeContainer = document.getElementById('file-tree');
+    const newNoteBtn = document.getElementById('newNoteBtn');
+    const editorContainer = document.getElementById('editor-container');
+    const welcomeMessage = document.getElementById('welcome-message');
+    const currentNotePathEl = document.getElementById('current-note-path');
+    const noteContentEl = document.getElementById('note-content');
+    const saveBtn = document.getElementById('saveBtn');
+    const deleteBtn = document.getElementById('deleteBtn');
+
+    let currentPath = null;
+    let debounceTimer;
+
+    // --- MOBIELE SIDEBAR LOGICA ---
+    function openSidebar() {
+        sidebar.classList.remove('-translate-x-full');
+        sidebarOverlay.classList.remove('hidden');
+    }
+
+    function closeSidebar() {
+        sidebar.classList.add('-translate-x-full');
+        sidebarOverlay.classList.add('hidden');
+    }
+
+    [menuBtn, menuBtnWelcome].forEach(btn => btn.addEventListener('click', openSidebar));
+    [closeSidebarBtn, sidebarOverlay].forEach(el => el.addEventListener('click', closeSidebar));
+
+    // --- API & APP LOGICA ---
+    const getApiKey = () => apiKeyInput.value.trim();
+
+    async function apiFetch(endpoint, options = {}) {
+        // ... (deze functie blijft ongewijzigd)
+    }
+
+    function renderTree(nodes, level = 0) {
+        // ... (deze functie blijft ongewijzigd)
+    }
+
+    async function loadNoteList() {
+        // ... (deze functie blijft ongewijzigd)
+    }
+
+    async function loadNoteContent(path) {
+        try {
+            const data = await apiFetch(`/notes/${path}`);
+            currentPath = path;
+            currentNotePathEl.textContent = path;
+            noteContentEl.value = data.content;
+            editorContainer.classList.remove('hidden');
+            welcomeMessage.classList.add('hidden');
+
+            // Belangrijk voor mobiel: sluit de sidebar na het selecteren van een notitie
+            if (window.innerWidth < 768) {
+                closeSidebar();
+            }
+        } catch (e) {
+            console.error('Kon notitie niet laden.', e);
+        }
+    }
+
+    async function saveNote() {
+        // ... (deze functie blijft ongewijzigd)
+    }
+
+    async function deleteNote() {
+        // ... (deze functie blijft ongewijzigd)
+    }
+
+    // --- EVENT LISTENERS ---
+    newNoteBtn.addEventListener('click', async () => {
+        // ... (deze functie blijft ongewijzigd)
+    });
+    
+    apiKeyInput.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(loadNoteList, 500);
+    });
+
+    fileTreeContainer.addEventListener('click', (e) => {
+        if (e.target.tagName === 'A') {
+            e.preventDefault();
+            loadNoteContent(e.target.dataset.path);
+        }
+    });
+
+    saveBtn.addEventListener('click', saveNote);
+    deleteBtn.addEventListener('click', deleteNote);
+
+    fileTreeContainer.innerHTML = '<p class="text-gray-500">Voer je API key in om notities te laden.</p>';
+</script>
+</body>
+</html>
