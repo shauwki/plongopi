@@ -21,7 +21,7 @@ reset_service() {
             paths_to_delete=("./automation/mqtt/")
             ;;
         "nextcloud")
-            paths_to_delete=("./apps/nextcloud/" "$HOME/appdock/nextcloud/html")
+            paths_to_delete=("./apps/nextcloud/" "$HOME/appdock/nextcloud")
             ;;
         "obsidian")
             paths_to_delete=("./apps/obsidian/")
@@ -121,6 +121,9 @@ mkdir -p ./apps/obsidian/templates
 mkdir -p ./automation/homeassistant
 mkdir -p $HOME/appdock/nextcloud/html
 # touch ./automation/homeassistant/configuration.yaml
+# touch ./automation/homeassistant/automations.yaml
+# touch ./automation/homeassistant/scripts.yaml
+# touch ./automation/homeassistant/scenes.yaml
 
 # --- STAP 2 IS NU VOOR ALLE CONFIGS ---
 echo "[2/4] Configuratiebestanden aanmaken..."
@@ -598,12 +601,7 @@ scene: !include scenes.yaml
 http:
   use_x_forwarded_for: true
   trusted_proxies:
-    - 172.19.0.6
-    - 172.18.0.9
-    - 172.18.0.10
-    - 172.18.0.12
-    - 172.20.0.0/16
-    - 172.16.0.0/12
+    - 172.20.0.0/16 
 EOF
 echo "-> ./automation/homeassistant/configuration.yaml aangemaakt."
 
@@ -616,7 +614,7 @@ sudo chown -R 33:33 $HOME/appdock/nextcloud/html
 sudo chown -R 33:33 ./apps/nextcloud/html/
 sudo chown -R 1883:1883 ./automation/mqtt/data/
 sudo chown -R 1883:1883 ./automation/mqtt/log/
-sudo chown -R 1000:1000 ./automation/homeassistant/
+sudo chown -R root:root ./automation/homeassistant/
 sudo chmod 0700 ./automation/mqtt/config/pwdfile
 
 echo "[4/4] Controleren op .env bestand..."
