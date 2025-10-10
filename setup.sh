@@ -122,10 +122,10 @@ mkdir -p ./apps/obsidian/notes
 mkdir -p ./apps/obsidian/templates 
 mkdir -p ./automation/homeassistant
 # mkdir -p $HOME/appdock/nextcloud/html
-# touch ./automation/homeassistant/configuration.yaml
-# touch ./automation/homeassistant/automations.yaml
-# touch ./automation/homeassistant/scripts.yaml
-# touch ./automation/homeassistant/scenes.yaml
+touch ./automation/homeassistant/configuration.yaml
+touch ./automation/homeassistant/automations.yaml
+touch ./automation/homeassistant/scripts.yaml
+touch ./automation/homeassistant/scenes.yaml
 
 # --- STAP 2 IS NU VOOR ALLE CONFIGS ---
 echo "[2/4] Configuratiebestanden aanmaken..."
@@ -603,8 +603,10 @@ scene: !include scenes.yaml
 http:
   use_x_forwarded_for: true
   trusted_proxies:
-    - 172.20.0.0/16 
+    - 172.20.0.0/16
+    - 172.18.0.0/16
     - 172.18.0.12
+    - 172.18.0.6
     - 172.18.0.7
     - 172.18.0.4
     - 172.18.0.3
