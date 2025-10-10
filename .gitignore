@@ -13,6 +13,8 @@ composer.lock
 apps/
 automation/
 database/
+backups/
 apps/*
 automation/*
 database/*
+backups/*
