@@ -1,10 +1,75 @@
 #!/bin/bash
-
 set -e
 
-if [ "$1" == "-r" ]; then
-    echo "--- 🔄 Reset Modus ---"
-    echo "Reset vlag (-r) gedetecteerd. De volgende mappen worden permanent verwijderd:"
+# --- FUNCTIE OM EEN SPECIFIEKE SERVICE TE RESETTEN ---
+reset_service() {
+    local service_name=$1
+    local paths_to_delete=()
+    local docker_service=$service_name
+
+    # Map service namen naar de bijbehorende mappen
+    case "$service_name" in
+        "database")
+            paths_to_delete=("./database/data/" "./database/chroma/")
+            # Meerdere containers hangen van de database af, dus we resetten ook chromadb
+            docker_service="database chromadb"
+            ;;
+        "n8n")
+            paths_to_delete=("./automation/n8n/")
+            ;;
+        "mqtt")
+            paths_to_delete=("./automation/mqtt/")
+            ;;
+        "nextcloud")
+            paths_to_delete=("./apps/nextcloud/" "$HOME/appdock/nextcloud/html")
+            ;;
+        "obsidian")
+            paths_to_delete=("./apps/obsidian/")
+            ;;
+        "web")
+            paths_to_delete=("./apps/web/")
+            ;;
+        "homeassistant")
+            paths_to_delete=("./automation/homeassistant/")
+            ;;
+        *)
+            echo "❌ Fout: Onbekende service '$service_name'."
+            echo "Beschikbare services: database, n8n, mqtt, nextcloud, obsidian, web, homeassistant"
+            exit 1
+            ;;
+    esac
+
+    echo "--- 🔄 Service Reset Modus ---"
+    echo "De volgende Docker container(s) worden gestopt en verwijderd: $docker_service"
+    echo "De volgende mappen worden permanent verwijderd:"
+    for path in "${paths_to_delete[@]}"; do
+        echo " - $path"
+    done
+    echo ""
+
+    read -p "Weet je dit zeker? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "-> Stoppen en verwijderen van Docker container(s)..."
+        docker compose rm -s -f $docker_service
+
+        echo "-> Mappen verwijderen..."
+        for path in "${paths_to_delete[@]}"; do
+            if [ -d "$path" ]; then
+                sudo rm -rf "$path"
+                echo "--> '$path' verwijderd."
+            fi
+        done
+        echo "--- ✅ Reset voor '$service_name' voltooid! ---"
+    else
+        echo "Reset geannuleerd."
+    fi
+}
+
+# --- FUNCTIE OM HET HELE PROJECT TE RESETTEN ---
+reset_full_project() {
+    echo "--- 🔄 Volledige Project Reset Modus ---"
+    echo "De volgende mappen worden permanent verwijderd:"
     echo " - ./apps/"
     echo " - ./automation/"
     echo " - ./database/"
@@ -13,26 +78,32 @@ if [ "$1" == "-r" ]; then
     echo
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Mappen verwijderen..."
-        if [ -d "./apps" ]; then
-            sudo rm -rf ./apps
-            echo "-> ./apps verwijderd."
-        fi
-        if [ -d "./automation" ]; then
-            sudo rm -rf ./automation
-            echo "-> ./automation verwijderd."
-        fi
-        if [ -d "./database" ]; then
-            sudo rm -rf ./database
-            echo "-> ./database verwijderd."
-        fi
+        echo "-> Stoppen en verwijderen van alle Docker containers en volumes..."
+        docker compose down -v
+
+        echo "-> Mappen verwijderen..."
+        if [ -d "./apps" ]; then sudo rm -rf ./apps; echo "--> ./apps verwijderd."; fi
+        if [ -d "./automation" ]; then sudo rm -rf ./automation; echo "--> ./automation verwijderd."; fi
+        if [ -d "./database" ]; then sudo rm -rf ./database; echo "--> ./database verwijderd."; fi
         echo ""
-        echo "--- ✅ Reset voltooid! ---"
+        echo "--- ✅ Volledige reset voltooid! ---"
     else
         echo "Reset geannuleerd."
     fi
+}
+
+# --- HOOFDLOGICA VAN HET SCRIPT ---
+if [ "$1" == "-r" ]; then
+    if [ -z "$2" ]; then
+        # Als alleen "-r" wordt gegeven, voer een volledige reset uit
+        reset_full_project
+    else
+        # Als "-r <servicenaam>" wordt gegeven, voer een gerichte reset uit
+        reset_service "$2"
+    fi
     exit 0
 fi
+
 
 echo "--- Plongo Setup Script ---"
 echo "[1/4] Benodigde mappen aanmaken..."
@@ -47,10 +118,33 @@ mkdir -p ./apps/web/public/html
 mkdir -p ./apps/nextcloud/html
 mkdir -p ./apps/obsidian/notes
 mkdir -p ./apps/obsidian/templates 
+mkdir -p ./automation/homeassistant
 mkdir -p $HOME/appdock/nextcloud/html
+# touch ./automation/homeassistant/configuration.yaml
 
 # --- STAP 2 IS NU VOOR ALLE CONFIGS ---
 echo "[2/4] Configuratiebestanden aanmaken..."
+
+# --- Maak het MQTT wachtwoordbestand aan ---
+echo "-> MQTT wachtwoordbestand aanmaken..."
+touch ./automation/mqtt/config/pwdfile
+if [ -f ./.env ]; then
+    export $(grep -v '^#' .env | xargs)
+    if [ -n "$MQTT_USER" ] && [ -n "$MQTT_PASSWORD" ]; then
+        echo "--> Gebruiker '$MQTT_USER' toevoegen aan MQTT..."
+        # Gebruik een tijdelijke docker container om het 'mosquitto_passwd' commando uit te voeren
+        # Dit is de officiële manier en zorgt voor de juiste encryptie.
+        docker run --rm -v ./automation/mqtt/config:/mosquitto/config eclipse-mosquitto \
+        mosquitto_passwd -b /mosquitto/config/pwdfile "$MQTT_USER" "$MQTT_PASSWORD"
+        echo "--> Gebruiker succesvol toegevoegd."
+    else
+        echo "--> LET OP: MQTT_USER of MQTT_PASSWORD niet ingesteld in .env. Wachtwoordbestand blijft leeg."
+    fi
+else
+    echo "--> LET OP: .env bestand niet gevonden. Wachtwoordbestand blijft leeg."
+    echo "--> Zorg ervoor dat er een .env bestand is zoals de example.env. Vul alle vereiste variabelen in."
+    exit 1
+fi
 
 # --- Maak database initialisatiescript aan ---
 if [ ! -f ./database/init-databases.sh ]; then
@@ -88,7 +182,7 @@ chmod +x ./database/init-databases.sh
 
 # --- Maak mosquitto.conf aan ---
 cat > ./automation/mqtt/config/mosquitto.conf << 'EOF'
-allow_anonymous true
+allow_anonymous false
 password_file /mosquitto/config/pwdfile
 listener 1883
 listener 9001
@@ -490,6 +584,29 @@ cat > ./apps/obsidian/templates/index.html << 'EOF'
 EOF
 echo "-> ./apps/obsidian/templates/index.html aangemaakt."
 
+cat > ./automation/homeassistant/configuration.yaml << 'EOF'
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 172.19.0.6
+    - 172.18.0.9
+    - 172.18.0.10
+    - 172.18.0.12
+    - 172.20.0.0/16
+    - 172.16.0.0/12
+EOF
+echo "-> ./automation/homeassistant/configuration.yaml aangemaakt."
+
 # --- De rest van je script ---
 echo "[3/4] Correcte permissies instellen..."
 sudo chown -R 1000:1000 ./automation/n8n/
@@ -499,6 +616,8 @@ sudo chown -R 33:33 $HOME/appdock/nextcloud/html
 sudo chown -R 33:33 ./apps/nextcloud/html/
 sudo chown -R 1883:1883 ./automation/mqtt/data/
 sudo chown -R 1883:1883 ./automation/mqtt/log/
+sudo chown -R 1000:1000 ./automation/homeassistant/
+sudo chmod 0700 ./automation/mqtt/config/pwdfile
 
 echo "[4/4] Controleren op .env bestand..."
 if [ ! -f ./.env ]; then

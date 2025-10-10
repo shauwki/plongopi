@@ -10,61 +10,6 @@ composer.phar
 composer.lock
 /vendor/
 
-# ===================================================================
-#  DATA & RUNTIME BESTANDEN
-# ===================================================================
-# Mappen die door applicaties worden gevuld tijdens het draaien.
-
-# --- DATABASE ---
-# Negeer de daadwerkelijke data- en indexmappen van de databases.
-# Het init-script wordt NIET genegeerd en blijft in de repository.
-database/data/
-database/chroma/
-
-# --- AUTOMATION ---
-# Negeer n8n runtime configuratie en de gekoppelde database data.
-automation/n8n/config/
-
-# Voor MQTT, negeer alles in de config-map BEHALVE mosquitto.conf.
-# Negeer ook de data- en log-mappen.
-automation/mqtt/config/*
-!automation/mqtt/config/mosquitto.conf
-automation/mqtt/data/
-automation/mqtt/log/
-
-# --- APPS ---
-# Negeer de map waar de webserver bestanden plaatst (zoals uploads).
-# De broncode in apps/web/src/ wordt wel meegenomen.
-apps/web/public/html/
-
-# Negeer de volledige Nextcloud installatie; alleen de docker-compose.yml is nodig.
-# Gebruikersdata wordt via een apart volume gemount en hoort niet in de repo.
-apps/nextcloud/html/
-
-# Negeer de persoonlijke notities in Obsidian, maar behoud de applicatiecode.
-apps/obsidian/notes/
-
-# Voor Home Assistant, negeer alles (*) en maak uitzonderingen (!)
-# voor de configuratiebestanden die je wilt bewaren.
-automation/homeassistant/*
-!automation/homeassistant/configuration.yaml
-# !apps/homeassistant/automations.yaml
-# !apps/homeassistant/scenes.yaml
-# !apps/homeassistant/scripts.yaml
-# !apps/homeassistant/custom_components/
-# (Haal commentaar weg voor bestanden/mappen die je wilt bewaren i guess?)
-
-
-# ===================================================================
-#  OPTIONELE APPLICATIES (voorbeeld)
-# ===================================================================
-
-# --- JELLYFIN ---
-# Negeer de media cache en de runtime configuratie.
-jellyfin/cache/
-jellyfin/config/
-
-# --- OLLAMA ---
-# Negeer gedownloade AI-modellen en data.
-ollama/models/
-ollama_data/
+./apps/
+./automation/
+./database/

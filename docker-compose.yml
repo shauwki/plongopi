@@ -1,5 +1,7 @@
 services:
-  # --- DATABASE STUFF ---
+  # ===================================================================
+  #  1. INFRASTRUCTUUR (De basis van je stack)
+  # ===================================================================
   database:
     image: pgvector/pgvector:pg15
     container_name: plongo_database
@@ -30,28 +32,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-  
-  chromadb:
-    image: chromadb/chroma
-    container_name: plongo_chromadb
+
+  redis:
+    image: redis:alpine
+    container_name: plongo_redis
     restart: unless-stopped
-    ports:
-      - "8001:8000"
-    volumes:
-      - ./database/chroma:/chroma/.chroma/index
     networks:
       - nulltick-network
-  
-  adminer:
-    image: adminer
-    container_name: plongo_adminer
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    networks:
-      - nulltick-network
-    depends_on:
-      - database
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   mqtt:
     image: eclipse-mosquitto:latest
@@ -70,9 +62,10 @@ services:
       - ./automation/mqtt/log:/mosquitto/log
     networks:
       - nulltick-network
-  # --- CORE STUFF ---
 
-  # --- AI & AUTOMATISERING ---
+  # ===================================================================
+  #  2. APPLICATIES (De hoofdapplicaties van je stack)
+  # ===================================================================
   n8n:
     image: n8nio/n8n
     container_name: plongo_n8n
@@ -108,7 +101,6 @@ services:
     networks:
       - nulltick-network
 
-  # --- APPLICATIES ---
   nextcloud:
     image: nextcloud:apache
     container_name: plongo_nextcloud
@@ -128,17 +120,11 @@ services:
       database:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./apps/nextcloud/html:/var/www/html
       # - ./apps/nextcloud/data:/var/www/html/data # verander het naar deze regel als je de data in de omgeving wilt houden
       - /root/devki/nextcloud:/var/www/html/data # kan anders path zijn voor jou
-    networks:
-      - nulltick-network
-  redis:
-    image: redis:alpine
-    container_name: plongo_redis
-    restart: unless-stopped
     networks:
       - nulltick-network
 
@@ -147,11 +133,20 @@ services:
     container_name: plongo_homeassistant
     restart: unless-stopped
     volumes:
-      - ./apps/homeassistant:/config
+      - ./automation/homeassistant:/config
       - /etc/localtime:/etc/localtime:ro
     networks:
       - nulltick-network
+    healthcheck:
+      # Controleert of de Home Assistant frontend laadt.
+      test: ["CMD", "curl", "-f", "http://localhost:8123"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
+  # ===================================================================
+  #  3. CUSTOM APPS (Applicaties die je zelf bouwt)
+  # ===================================================================
   obsidian:
     build: ./apps/obsidian
     restart: unless-stopped
@@ -173,9 +168,35 @@ services:
     networks:
       - nulltick-network
 
-  # --- NETWERK & TOEGANG ---
-  # (enige stuk niet offline, met dit token wordt de tunnel gekoppeld aan je online cloudflared account voor 'veilige' remote access)
-  # Alles wat je in cloudflared zet is bereikbaar via https://jouwdomein.com/servicenaam (bijv. n8n.jouwdomein.com)
+  # ===================================================================
+  #  4. TOOLS & SUPPORTING SERVICES
+  # ===================================================================
+  chromadb:
+    image: chromadb/chroma
+    container_name: plongo_chromadb
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./database/chroma:/chroma/.chroma/index
+    networks:
+      - nulltick-network
+
+  adminer:
+    image: adminer
+    container_name: plongo_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - nulltick-network
+    depends_on:
+      database:
+        condition: service_healthy
+
+  # ===================================================================
+  #  5. GATEWAY (De toegangspoort tot je stack)
+  # ===================================================================
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: plongo_cloudflared
