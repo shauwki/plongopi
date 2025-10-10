@@ -46,8 +46,8 @@ apps/obsidian/notes/
 
 # Voor Home Assistant, negeer alles (*) en maak uitzonderingen (!)
 # voor de configuratiebestanden die je wilt bewaren.
-apps/homeassistant/*
-# !apps/homeassistant/configuration.yaml
+automation/homeassistant/*
+!automation/homeassistant/configuration.yaml
 # !apps/homeassistant/automations.yaml
 # !apps/homeassistant/scenes.yaml
 # !apps/homeassistant/scripts.yaml
