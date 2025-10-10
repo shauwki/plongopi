@@ -21,7 +21,8 @@ reset_service() {
             paths_to_delete=("./automation/mqtt/")
             ;;
         "nextcloud")
-            paths_to_delete=("./apps/nextcloud/" "$HOME/appdock/nextcloud")
+            # paths_to_delete=("./apps/nextcloud/" "$HOME/appdock/nextcloud")
+            paths_to_delete=("./apps/nextcloud/")
             ;;
         "obsidian")
             paths_to_delete=("./apps/obsidian/")
@@ -116,10 +117,11 @@ mkdir -p ./automation/mqtt/log
 mkdir -p ./apps/web/src
 mkdir -p ./apps/web/public/html
 mkdir -p ./apps/nextcloud/html
+mkdir -p ./apps/nextcloud/data
 mkdir -p ./apps/obsidian/notes
 mkdir -p ./apps/obsidian/templates 
 mkdir -p ./automation/homeassistant
-mkdir -p $HOME/appdock/nextcloud/html
+# mkdir -p $HOME/appdock/nextcloud/html
 # touch ./automation/homeassistant/configuration.yaml
 # touch ./automation/homeassistant/automations.yaml
 # touch ./automation/homeassistant/scripts.yaml
@@ -602,6 +604,10 @@ http:
   use_x_forwarded_for: true
   trusted_proxies:
     - 172.20.0.0/16 
+    - 172.18.0.12
+    - 172.18.0.7
+    - 172.18.0.4
+    - 172.18.0.3
 EOF
 echo "-> ./automation/homeassistant/configuration.yaml aangemaakt."
 
@@ -610,7 +616,7 @@ echo "[3/4] Correcte permissies instellen..."
 sudo chown -R 1000:1000 ./automation/n8n/
 sudo chown -R 1000:1000 ./apps/obsidian/
 sudo chown -R 33:33 ./apps/web/public/html/ 
-sudo chown -R 33:33 $HOME/appdock/nextcloud/html
+# sudo chown -R 33:33 $HOME/appdock/nextcloud/html
 sudo chown -R 33:33 ./apps/nextcloud/html/
 sudo chown -R 1883:1883 ./automation/mqtt/data/
 sudo chown -R 1883:1883 ./automation/mqtt/log/
