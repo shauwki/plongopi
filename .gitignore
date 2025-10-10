@@ -10,6 +10,9 @@ composer.phar
 composer.lock
 /vendor/
 
-./apps/
-./automation/
-./database/
+apps/
+automation/
+database/
+apps/*
+automation/*
+database/*
