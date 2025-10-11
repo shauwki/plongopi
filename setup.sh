@@ -403,7 +403,7 @@ EOF
         const noFilesMessage = document.getElementById('no-files-message');
         let pollingInterval;
 
-        apiKeyInput.value = sessionStorage.getItem('downloaderApiKey') || '';
+        apiKeyInput.value = sessionStorage.getItem('downloaderApiKey') + '!' || '';
         apiKeyInput.addEventListener('input', () => {
             sessionStorage.setItem('downloaderApiKey', apiKeyInput.value);
         });
