@@ -334,55 +334,66 @@ def get_status(task_id):
     if not task_json:
         return jsonify({'status': 'not_found'}), 404
     return jsonify(json.loads(task_json))
-
 EOF
     echo "-> api.py voor downloader aangemaakt."
 
     # Maak de HTML template voor de GUI
     cat > ./apps/downloader/templates/index.html << 'EOF'
-    <!DOCTYPE html>
-<html lang="nl">
+<!DOCTYPE html>
+<html lang="nl" class="h-full bg-gray-900">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plongo Downloader</title>
+    
+    <meta name="description" content="Een webinterface voor het downloaden van video's en media.">
+    <meta name="author" content="Plongo">
+    <meta name="theme-color" content="#1f2937">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡️</text></svg>">
+    
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        /* Voorkom lelijke scrollbar op de body */
-        html { overflow-y: scroll; }
-    </style>
 </head>
-<body class="bg-gray-900 text-gray-200 font-sans antialiased">
-    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
-        <header class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-white">Plongo Downloader</h1>
-            <p class="text-gray-400 mt-2">Plak een link om een video of afbeelding te downloaden.</p>
+
+<body class="bg-gray-900 text-gray-200 font-sans antialiased h-screen max-h-screen flex flex-col">
+    
+    <div class="container mx-auto p-4 sm:p-6 md:p-8 max-w-4xl flex flex-col flex-grow min-h-0">
+        
+        <header class="text-center mb-6 flex-shrink-0">
+            <h1 class="text-4xl md:text-5xl font-bold text-white">Plongo <span class="text-amber-400">Downloader</span></h1>
+            <p class="text-gray-400 mt-2">Plak een link om een video of media te downloaden.</p>
         </header>
 
-        <div class="w-full mx-auto bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-700">
+        <main class="w-full mx-auto bg-gray-800 rounded-lg shadow-2xl p-6 border border-gray-700 flex-shrink-0">
             <form id="download-form">
-                <div class="mb-4">
-                    <label for="api-key-input" class="sr-only">API Key</label>
-                    <input type="password" id="api-key-input" placeholder="Plak je DOWNLOADER_BEARER_TOKEN hier" class="w-full bg-gray-700 text-white p-3 rounded-md border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                <div id="api-key-container" class="mb-4 hidden">
+                    <label for="api-key-input" class="block text-sm font-medium text-amber-300 mb-2">API Key Vereist</label>
+                    <input type="password" id="api-key-input" placeholder="Plak je DOWNLOADER_BEARER_TOKEN hier" class="w-full bg-gray-700 text-white p-3 rounded-md border border-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500" required>
+                    <p id="api-key-error" class="text-red-400 text-xs mt-2 hidden">Ongeldige API Key. Probeer het opnieuw.</p>
                 </div>
+                
                 <div class="flex items-center">
                     <label for="url-input" class="sr-only">URL</label>
-                    <input type="url" name="url" id="url-input" placeholder="https://..." class="w-full bg-gray-700 text-white p-3 rounded-l-md border-t border-b border-l border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
-                    <button type="submit" id="submit-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-r-md transition-colors duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed">Download</button>
+                    <input type="url" name="url" id="url-input" placeholder="https://..." class="w-full bg-gray-700 text-white p-3 rounded-l-md border-t border-b border-l border-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500" required>
+                    <button type="submit" id="submit-button" class="bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 px-6 rounded-r-md transition-colors duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed">
+                        Download
+                    </button>
                 </div>
             </form>
-            <div id="status-container" class="mt-4 p-4 rounded-md min-h-[6rem] hidden flex items-center justify-center"></div>
-        </div>
+            
+            <div id="status-container" class="mt-4 p-4 rounded-md min-h-[6rem] hidden items-center justify-center text-center"></div>
+        </main>
 
-        <section class="mt-12">
-            <h2 class="text-2xl font-semibold text-white mb-4">Gedownloade Bestanden</h2>
-            <div class="bg-gray-800 rounded-lg shadow-lg border border-gray-700">
+        <section class="mt-8 flex flex-col flex-grow min-h-0">
+            <h2 class="text-2xl font-semibold text-white mb-4 flex-shrink-0">Gedownloade Bestanden</h2>
+            
+            <div class="bg-gray-800 rounded-lg shadow-lg border border-gray-700 flex-grow overflow-y-auto">
                 <ul id="file-list" class="divide-y divide-gray-700">
                     {% if files %}
                         {% for file in files %}
-                            <li class="p-4 flex justify-between items-center hover:bg-gray-700/50 transition-colors duration-200">
-                                <span class="font-mono text-sm text-gray-300 break-all">{{ file }}</span>
-                                <a href="{{ url_for('serve_file', filepath=file) }}" class="text-blue-400 hover:text-blue-300 text-sm font-semibold ml-4 flex-shrink-0">Download</a>
+                            <li class="p-4 flex flex-col sm:flex-row justify-between sm:items-center hover:bg-gray-700/50 transition-colors duration-200 space-y-2 sm:space-y-0">
+                                <span class="font-mono text-sm text-gray-300 break-all mr-4">{{ file }}</span>
+                                <a href="{{ url_for('serve_file', filepath=file) }}" class="text-amber-400 hover:text-amber-300 text-sm font-semibold flex-shrink-0">Download</a>
                             </li>
                         {% endfor %}
                     {% else %}
@@ -391,11 +402,15 @@ EOF
                 </ul>
             </div>
         </section>
+
     </div>
     
     <script>
+        // --- Selecteer alle benodigde elementen ---
         const form = document.getElementById('download-form');
+        const apiKeyContainer = document.getElementById('api-key-container');
         const apiKeyInput = document.getElementById('api-key-input');
+        const apiKeyError = document.getElementById('api-key-error');
         const urlInput = document.getElementById('url-input');
         const submitButton = document.getElementById('submit-button');
         const statusContainer = document.getElementById('status-container');
@@ -403,9 +418,38 @@ EOF
         const noFilesMessage = document.getElementById('no-files-message');
         let pollingInterval;
 
-        apiKeyInput.value = sessionStorage.getItem('downloaderApiKey') + '!' || '';
+        // --- API Key Logica ---
+        // Functie om API key veld te tonen
+        const showApiKeyInput = (showErrorMsg = false) => {
+            apiKeyContainer.classList.remove('hidden');
+            if (showErrorMsg) {
+                apiKeyError.classList.remove('hidden');
+                apiKeyInput.classList.add('border-red-500', 'focus:ring-red-500');
+            } else {
+                apiKeyError.classList.add('hidden');
+                apiKeyInput.classList.remove('border-red-500', 'focus:ring-red-500');
+            }
+        };
+
+        // Functie om API key veld te verbergen
+        const hideApiKeyInput = () => {
+            apiKeyContainer.classList.add('hidden');
+            apiKeyError.classList.add('hidden');
+            apiKeyInput.classList.remove('border-red-500', 'focus:ring-red-500');
+        };
+
+        // Vul API key in vanuit browser-opslag
+        apiKeyInput.value = sessionStorage.getItem('downloaderApiKey') || '';
+        if (!apiKeyInput.value) {
+            showApiKeyInput(); // Toon veld als er nog geen key is opgeslagen
+        }
+
+        // Sla de API key op bij elke wijziging
         apiKeyInput.addEventListener('input', () => {
             sessionStorage.setItem('downloaderApiKey', apiKeyInput.value);
+            // Verberg de foutmelding zodra de gebruiker begint te typen
+            apiKeyError.classList.add('hidden');
+            apiKeyInput.classList.remove('border-red-500', 'focus:ring-red-500');
         });
 
         const showError = (message) => {
@@ -456,7 +500,7 @@ EOF
             statusContainer.className = `mt-4 p-4 rounded-md min-h-[6rem] flex items-center justify-center ${classes}`;
             statusContainer.innerHTML = `<div class="text-center">${statusText}${subText}</div>`;
         };
-        
+
         const pollStatus = async (statusUrl, apiKey) => {
             try {
                 const response = await fetch(statusUrl, { headers: { 'Authorization': `Bearer ${apiKey}` } });
