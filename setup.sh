@@ -1,6 +1,549 @@
 #!/bin/bash
 set -e
 
+setup_downloader() {
+    echo "--- [2/2] Service 'downloader' instellen ---"
+    local downloader_dir="./apps/downloader"
+    local vendor_dir="${downloader_dir}/vendor/yt-dlp"
+    local config_dir="${downloader_dir}/config"
+
+    # Maak alle benodigde mappen in één keer aan
+    mkdir -p "${vendor_dir}"
+    mkdir -p "${downloader_dir}/downloads/"{videos,images,documents,other}
+    mkdir -p "${downloader_dir}/templates"
+    mkdir -p "${config_dir}"
+
+    # --- ARCHITECTUUR DETECTIE VOOR YT-DLP ---
+    echo "-> Detecteren van CPU-architectuur..."
+    ARCH=$(uname -m)
+    YT_DLP_URL=""
+    if [[ "$ARCH" == "x86_64" ]]; then
+        echo "--> x86_64 (Intel/AMD) gedetecteerd."
+        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+    elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
+        echo "--> aarch64 (ARM) gedetecteerd (Raspberry Pi / Apple Silicon)."
+        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64"
+    else
+        echo "❌ Fout: Niet-ondersteunde architectuur: $ARCH"
+        exit 1
+    fi
+
+    echo "-> Downloaden van de juiste yt-dlp versie..."
+    # We slaan het altijd op als 'yt-dlp_linux' zodat de Python code niet hoeft te veranderen
+    curl -L "$YT_DLP_URL" -o "${vendor_dir}/yt-dlp_linux"
+    chmod +x "${vendor_dir}/yt-dlp_linux"
+    echo "--> yt-dlp gedownload en uitvoerbaar gemaakt."
+
+    # Maak Dockerfile aan
+    cat > ./apps/downloader/Dockerfile << 'EOF'
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+RUN chmod +x vendor/yt-dlp/yt-dlp_linux
+EXPOSE 5000
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "120", "api:app"]
+EOF
+    echo "-> Dockerfile voor downloader aangemaakt."
+
+    # Maak requirements.txt aan
+    cat > ./apps/downloader/requirements.txt << 'EOF'
+Flask
+python-dotenv
+gunicorn
+redis
+EOF
+    echo "-> requirements.txt voor downloader aangemaakt."
+
+    # Maak downloader.py aan
+    cat > ./apps/downloader/downloader.py << 'EOF'
+import subprocess
+import os
+import shutil
+import glob
+import json
+import platform
+from pathlib import Path
+
+# Detecteer OS en kies de juiste executable
+OS_TYPE = platform.system()
+YT_DLP_EXEC = None
+# Pad is relatief aan de WORKDIR (/app) in de Docker container
+if OS_TYPE == "Linux":
+    YT_DLP_EXEC = os.path.join(os.getcwd(), 'vendor/yt-dlp/yt-dlp_linux')
+elif OS_TYPE == "Darwin": # macOS
+    YT_DLP_EXEC = os.path.join(os.getcwd(), 'vendor/yt-dlp/yt-dlp_macos')
+
+def get_output_subdirectory(final_output_path):
+    """Bepaalt de juiste submap op basis van de bestandsextensie."""
+    ext = Path(final_output_path).suffix.lower().lstrip('.')
+    if ext in ['mp4', 'mkv', 'webm', 'mov', 'avi', 'flv']: return 'videos'
+    if ext in ['jpg', 'jpeg', 'png', 'webp', 'svg']: return 'images'
+    if ext in ['gif']: return 'gifs'
+    if ext in ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt']: return 'documents'
+    return 'other'
+
+def find_downloaded_parts(directory):
+    """
+    Scant een map op de gedownloade bestanden van yt-dlp.
+    Returned de bestanden die potentieel video, audio of gemerged zijn.
+    """
+    video_parts = glob.glob(os.path.join(directory, 'media.*.mp4')) + glob.glob(os.path.join(directory, 'media.*.webm'))
+    audio_parts = glob.glob(os.path.join(directory, 'media.*.m4a')) + glob.glob(os.path.join(directory, 'media.*.opus'))
+    merged_file = glob.glob(os.path.join(directory, 'media.mp4')) + glob.glob(os.path.join(directory, 'media.webm'))
+    return video_parts, audio_parts, merged_file
+
+def download_video(url, base_output_dir, redis_client, task_id):
+    """
+    Downloadt, her-codeert en sorteert een video. Update de status in Redis.
+    """
+    print(f"--- download_video() aangeroepen voor {url} (Taak-ID: {task_id}) ---")
+
+    # Bepaal het pad naar de yt-dlp executable
+    YT_DLP_EXEC = 'vendor/yt-dlp/yt-dlp_linux' if platform.system() == "Linux" else 'vendor/yt-dlp/yt-dlp_macos'
+    if not os.path.exists(YT_DLP_EXEC):
+        return {'success': False, 'error': "yt-dlp executable niet gevonden."}
+    
+    ffmpeg_exec = shutil.which('ffmpeg')
+    if not ffmpeg_exec:
+        return {'success': False, 'error': "ffmpeg is niet geïnstalleerd in de container."}
+
+    temp_dir = os.path.join(base_output_dir, "temp_download")
+    
+    try:
+        def update_status(status_message):
+            try:
+                redis_client.set(f"task:{task_id}", json.dumps({'status': status_message}))
+                print(f"  -> Redis status bijgewerkt: {status_message}")
+            except Exception as e:
+                print(f"  !! FOUT bij bijwerken Redis status: {e}")
+
+        update_status('starting')
+        if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir, exist_ok=True)
+
+        base_command = [YT_DLP_EXEC, '--restrict-filenames', '--no-warnings']
+        cookie_file_path = '/config/cookies.txt'
+        
+        # --- DE CRUCIALE WIJZIGING ---
+        if os.path.exists(cookie_file_path):
+            print("INFO: Cookie-bestand gevonden, wordt gebruikt.")
+            # Definieer een tijdelijk pad voor de cookie-jar BINNEN de temp-map
+            temp_cookie_jar = os.path.join(temp_dir, 'cookiejar.txt')
+            # Kopieer de originele cookies naar de tijdelijke jar
+            shutil.copy(cookie_file_path, temp_cookie_jar)
+            # Vertel yt-dlp om dit tijdelijke, beschrijfbare bestand te gebruiken
+            base_command.extend(['--cookies', temp_cookie_jar])
+        
+        update_status('fetching_metadata')
+        info_command = base_command + ['--dump-json', url]
+        metadata = json.loads(subprocess.check_output(info_command))
+        video_title = metadata.get('title', 'downloaded_video')
+
+        update_status('downloading')
+        command_dl = base_command + ['-f', 'bestvideo+bestaudio/best', '-k', '-o', os.path.join(temp_dir, 'media.%(ext)s'), url]
+        subprocess.run(command_dl, check=True, capture_output=True, text=True)
+
+        update_status('processing')
+        video_parts, audio_parts, merged_file = find_downloaded_parts(temp_dir)
+        final_file_to_move = None
+
+        if merged_file or (video_parts and audio_parts):
+            input_file = merged_file[0] if merged_file else video_parts[0]
+            audio_input_args = ['-i', audio_parts[0]] if audio_parts else []
+            
+            intermediate_output_path = os.path.join(temp_dir, f"{video_title}.mp4")
+            
+            command_reencode = [ffmpeg_exec, '-i', input_file] + audio_input_args + [
+                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+                '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-y', intermediate_output_path
+            ]
+            subprocess.run(command_reencode, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            final_file_to_move = intermediate_output_path
+        else:
+            raise FileNotFoundError("Kon geen bruikbare videobestanden vinden na download.")
+
+        update_status('sorting')
+        target_subdir = get_output_subdirectory(final_file_to_move)
+        final_destination_dir = os.path.join(base_output_dir, target_subdir)
+        os.makedirs(final_destination_dir, exist_ok=True)
+        final_filename = f"{video_title}{Path(final_file_to_move).suffix}"
+        final_filepath = os.path.join(final_destination_dir, final_filename)
+        shutil.move(final_file_to_move, final_filepath)
+        
+        relative_filepath = os.path.relpath(final_filepath, base_output_dir)
+        return {'success': True, 'data': metadata, 'filepath': relative_filepath}
+
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Fout in extern commando: {e.stderr}"
+        return {'success': False, 'error': error_msg}
+    except Exception as e:
+        error_msg = f"Een onverwachte fout: {str(e)}"
+        return {'success': False, 'error': error_msg}
+    finally:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            print("--- Tijdelijke bestanden opgeruimd ---")
+
+EOF
+    echo "-> downloader.py aangemaakt."
+
+    # Maak api.py aan
+    cat > ./apps/downloader/api.py << 'EOF'
+import os
+import uuid
+import json
+import redis
+import platform
+import subprocess
+from functools import wraps
+from threading import Thread
+from flask import Flask, request, jsonify, render_template, send_from_directory, url_for
+from downloader import download_video
+from dotenv import load_dotenv
+
+load_dotenv()
+app = Flask(__name__)
+BEARER_TOKEN = os.environ.get('DOWNLOADER_BEARER_TOKEN')
+DOWNLOADS_DIR = '/downloads'
+
+# Maak verbinding met de Redis-service
+redis_client = redis.Redis(host='redis', port=6379, decode_responses=True)
+
+# Bepaal het pad naar yt-dlp voor de /api/info endpoint
+OS_TYPE = platform.system()
+YT_DLP_EXEC_PATH_API = None
+if OS_TYPE == "Linux":
+    YT_DLP_EXEC_PATH_API = os.path.join('/app', 'vendor/yt-dlp/yt-dlp_linux')
+elif OS_TYPE == "Darwin": # macOS
+    YT_DLP_EXEC_PATH_API = os.path.join('/app', 'vendor/yt-dlp/yt-dlp_macos')
+
+
+def require_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not BEARER_TOKEN: 
+            return jsonify({"error": "Configuration Error", "message": "API Key is not configured on the server."}), 500
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({"error": "Unauthorized", "message": "Authorization header is missing or invalid."}), 401
+        provided_key = auth_header.split(' ')[1]
+        if provided_key != BEARER_TOKEN:
+            return jsonify({"error": "Forbidden", "message": "Invalid API Key."}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+def run_download_in_background(url, task_id):
+    """Functie die de download draait en de status in Redis update."""
+    print(f"Background task {task_id} started for {url}")
+    # De download_video functie werkt nu zelf de Redis status bij
+    result = download_video(url, DOWNLOADS_DIR, redis_client, task_id) 
+    
+    # Als de download_video al de final status heeft gezet, hoeven we hier niets te doen
+    # Anders zorgen we dat er een finished status is
+    current_status_json = redis_client.get(f"task:{task_id}")
+    if not current_status_json or json.loads(current_status_json).get('status') != 'finished':
+        final_status = {'status': 'finished', 'result': result}
+        redis_client.setex(f"task:{task_id}", 600, json.dumps(final_status))
+    print(f"Background task {task_id} finished.")
+
+def start_download_task(url):
+    """Maakt een nieuwe taak aan, start de thread en geeft de taakinfo terug."""
+    task_id = str(uuid.uuid4())
+    # Sla de initiële status op in Redis, niet in een lokale dict
+    redis_client.set(f"task:{task_id}", json.dumps({'status': 'queued'})) 
+    
+    thread = Thread(target=run_download_in_background, args=(url, task_id), daemon=True)
+    thread.start()
+    
+    return {
+        'status': 'queued',
+        'task_id': task_id,
+        'status_url': url_for('get_status', task_id=task_id, _external=False)
+    }
+
+# --- GUI Routes ---
+@app.route('/', methods=['GET'])
+def index():
+    file_list = []
+    if os.path.exists(DOWNLOADS_DIR):
+        for subdir, _, files in os.walk(DOWNLOADS_DIR):
+            for file in files:
+                if not file.startswith('.'):
+                    filepath = os.path.join(subdir, file)
+                    relative_path = os.path.relpath(filepath, DOWNLOADS_DIR)
+                    file_list.append(relative_path)
+    return render_template('index.html', files=sorted(file_list, reverse=True))
+
+
+@app.route('/files/<path:filepath>')
+def serve_file(filepath):
+    return send_from_directory(DOWNLOADS_DIR, filepath, as_attachment=True)
+
+
+# --- API Routes ---
+@app.route('/api/info', methods=['GET'])
+@require_api_key
+def get_video_info():
+    url = request.args.get('url')
+    if not url:
+        return jsonify({"error": "Bad Request", "message": "URL query parameter is missing."}), 400
+
+    if not YT_DLP_EXEC_PATH_API or not os.path.exists(YT_DLP_EXEC_PATH_API):
+        return jsonify({"error": "Configuration Error", "message": f"yt-dlp executable niet gevonden voor dit OS ({OS_TYPE})."}), 500
+
+    try:
+        base_command = [YT_DLP_EXEC_PATH_API, '--restrict-filenames']
+        cookie_file_path = '/config/cookies.txt'
+        if os.path.exists(cookie_file_path):
+            base_command.extend(['--cookies', cookie_file_path])
+
+        info_command = base_command + ['--dump-json', url]
+        result = subprocess.run(info_command, check=True, capture_output=True, text=True)
+        
+        video_info = json.loads(result.stdout)
+        return jsonify(video_info), 200
+
+    except subprocess.CalledProcessError as e:
+        error_details = e.stderr
+        error_msg = f"Fout bij ophalen video info: {error_details[:500]}..."
+        if "unauthorized" in error_details.lower() or "login" in error_details.lower():
+            error_msg = "Kan info niet ophalen (Unauthorized). Login vereist. Cookies.txt is mogelijk verlopen of incorrect."
+        return jsonify({"error": error_msg}), 500
+    except Exception as e:
+        return jsonify({"error": f"Onverwachte fout bij ophalen info: {str(e)}"}), 500
+
+
+@app.route('/api/download', methods=['POST'])
+@require_api_key
+def handle_api_download():
+    data = request.json
+    if not data or 'url' not in data: 
+        return jsonify({"error": "Bad Request", "message": "Request body must contain 'url' key."}), 400
+    
+    task_info = start_download_task(data['url'])
+    return jsonify(task_info), 202
+
+@app.route('/status/<string:task_id>', methods=['GET'])
+@require_api_key # Beveilig ook de status-endpoint
+def get_status(task_id):
+    """Endpoint om de status van een specifieke taak op te vragen."""
+    task_json = redis_client.get(f"task:{task_id}")
+    if not task_json:
+        return jsonify({'status': 'not_found'}), 404
+    return jsonify(json.loads(task_json))
+
+EOF
+    echo "-> api.py voor downloader aangemaakt."
+
+    # Maak de HTML template voor de GUI
+    cat > ./apps/downloader/templates/index.html << 'EOF'
+    <!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plongo Downloader</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Voorkom lelijke scrollbar op de body */
+        html { overflow-y: scroll; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans antialiased">
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-white">Plongo Downloader</h1>
+            <p class="text-gray-400 mt-2">Plak een link om een video of afbeelding te downloaden.</p>
+        </header>
+
+        <div class="w-full mx-auto bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-700">
+            <form id="download-form">
+                <div class="mb-4">
+                    <label for="api-key-input" class="sr-only">API Key</label>
+                    <input type="password" id="api-key-input" placeholder="Plak je DOWNLOADER_BEARER_TOKEN hier" class="w-full bg-gray-700 text-white p-3 rounded-md border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+                <div class="flex items-center">
+                    <label for="url-input" class="sr-only">URL</label>
+                    <input type="url" name="url" id="url-input" placeholder="https://..." class="w-full bg-gray-700 text-white p-3 rounded-l-md border-t border-b border-l border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <button type="submit" id="submit-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-r-md transition-colors duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed">Download</button>
+                </div>
+            </form>
+            <div id="status-container" class="mt-4 p-4 rounded-md min-h-[6rem] hidden flex items-center justify-center"></div>
+        </div>
+
+        <section class="mt-12">
+            <h2 class="text-2xl font-semibold text-white mb-4">Gedownloade Bestanden</h2>
+            <div class="bg-gray-800 rounded-lg shadow-lg border border-gray-700">
+                <ul id="file-list" class="divide-y divide-gray-700">
+                    {% if files %}
+                        {% for file in files %}
+                            <li class="p-4 flex justify-between items-center hover:bg-gray-700/50 transition-colors duration-200">
+                                <span class="font-mono text-sm text-gray-300 break-all">{{ file }}</span>
+                                <a href="{{ url_for('serve_file', filepath=file) }}" class="text-blue-400 hover:text-blue-300 text-sm font-semibold ml-4 flex-shrink-0">Download</a>
+                            </li>
+                        {% endfor %}
+                    {% else %}
+                        <li id="no-files-message" class="p-4 text-center text-gray-500">Nog geen bestanden gedownload.</li>
+                    {% endif %}
+                </ul>
+            </div>
+        </section>
+    </div>
+    
+    <script>
+        const form = document.getElementById('download-form');
+        const apiKeyInput = document.getElementById('api-key-input');
+        const urlInput = document.getElementById('url-input');
+        const submitButton = document.getElementById('submit-button');
+        const statusContainer = document.getElementById('status-container');
+        const fileList = document.getElementById('file-list');
+        const noFilesMessage = document.getElementById('no-files-message');
+        let pollingInterval;
+
+        apiKeyInput.value = sessionStorage.getItem('downloaderApiKey') || '';
+        apiKeyInput.addEventListener('input', () => {
+            sessionStorage.setItem('downloaderApiKey', apiKeyInput.value);
+        });
+
+        const showError = (message) => {
+            statusContainer.className = 'mt-4 p-4 rounded-md min-h-[6rem] flex items-center justify-center bg-red-900/50 border border-red-700';
+            statusContainer.innerHTML = `<div class="text-center"><p class="text-red-300 font-bold">✗ Fout</p><p class="text-sm text-red-400">${message}</p></div>`;
+            statusContainer.classList.remove('hidden');
+            submitButton.disabled = false;
+            submitButton.textContent = 'Download';
+            if(pollingInterval) clearInterval(pollingInterval);
+        };
+
+        const updateStatus = (task) => {
+            let statusText = '', subText = '', classes = '';
+            switch (task.status) {
+                case 'queued':
+                    classes = 'bg-yellow-900/50 border border-yellow-700';
+                    statusText = '<p class="text-yellow-300 font-bold">In de wachtrij...</p>';
+                    subText = '<p class="text-sm text-yellow-400">Wachten op een vrije worker.</p>';
+                    break;
+                case 'fetching_metadata':
+                case 'downloading':
+                    classes = 'bg-blue-900/50 border border-blue-700';
+                    statusText = '<p class="text-blue-300 font-bold">Downloaden...</p>';
+                    subText = `<p class="text-sm text-blue-400">Status: ${task.status}</p>`;
+                    break;
+                case 'encoding':
+                case 'sorting':
+                case 'processing':
+                    classes = 'bg-purple-900/50 border border-purple-700';
+                    statusText = '<p class="text-purple-300 font-bold">Verwerken...</p>';
+                    subText = `<p class="text-sm text-purple-400">Status: ${task.status}</p>`;
+                    break;
+                case 'finished':
+                    if (task.result && task.result.success) {
+                        classes = 'bg-green-900/50 border border-green-700';
+                        statusText = '<p class="text-green-300 font-bold">✓ Succes!</p>';
+                        subText = `<p class="text-sm text-gray-300">Bestand gedownload: ${task.result.data.title}</p>`;
+                    } else {
+                        classes = 'bg-red-900/50 border border-red-700';
+                        statusText = '<p class="text-red-300 font-bold">✗ Fout opgetreden</p>';
+                        subText = `<p class="text-sm text-red-400 font-mono">${task.result.error}</p>`;
+                    }
+                    break;
+                default:
+                    classes = 'bg-gray-700 border border-gray-600';
+                    statusText = `<p>Onbekende status: ${task.status}</p>`;
+            }
+            statusContainer.className = `mt-4 p-4 rounded-md min-h-[6rem] flex items-center justify-center ${classes}`;
+            statusContainer.innerHTML = `<div class="text-center">${statusText}${subText}</div>`;
+        };
+        
+        const pollStatus = async (statusUrl, apiKey) => {
+            try {
+                const response = await fetch(statusUrl, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+                if (!response.ok) throw new Error(`Status check mislukt: ${response.status}`);
+                const task = await response.json();
+                updateStatus(task);
+
+                if (task.status === 'finished') {
+                    clearInterval(pollingInterval);
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Download';
+                    
+                    // --- DE BELANGRIJKSTE WIJZIGING ---
+                    if (task.result && task.result.success) {
+                        // Creëer een nieuw lijst-item en voeg het VOORAAN toe
+                        const newFile = task.result.filepath;
+                        const newLi = document.createElement('li');
+                        newLi.className = 'p-4 flex justify-between items-center hover:bg-gray-700/50 transition-colors duration-200';
+                        newLi.innerHTML = `
+                            <span class="font-mono text-sm text-gray-300 break-all">${newFile}</span>
+                            <a href="/files/${newFile}" class="text-blue-400 hover:text-blue-300 text-sm ml-4 flex-shrink-0">Download</a>
+                        `;
+                        fileList.prepend(newLi);
+                        
+                        // Verberg de "nog geen bestanden" boodschap als die zichtbaar was
+                        if (noFilesMessage) {
+                            noFilesMessage.style.display = 'none';
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Polling error:', error);
+                showError('Kon de status niet ophalen of er is een netwerkfout.');
+            }
+        };
+
+        form.addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const url = urlInput.value;
+            const apiKey = apiKeyInput.value;
+            if (!url || !apiKey) {
+                alert('URL en API Key zijn verplicht!');
+                return;
+            }
+
+            submitButton.disabled = true;
+            submitButton.textContent = 'Bezig...';
+            statusContainer.className = 'mt-4 p-4 rounded-md h-24 bg-yellow-900/50 border border-yellow-700';
+            statusContainer.innerHTML = '<p class="text-yellow-300 font-bold">In de wachtrij...</p><p class="text-sm text-yellow-400">Download wordt gestart.</p>';
+            statusContainer.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `Serverfout: ${response.status}`);
+                }
+
+                const data = await response.json();
+                if (data.status_url) {
+                    // Start polling
+                    pollingInterval = setInterval(() => pollStatus(data.status_url, apiKey), 2000);
+                }
+            } catch (error) {
+                showError(error.message);
+            }
+        });
+    </script>
+</body>
+</html>
+EOF
+    echo "-> index.html template voor GUI aangemaakt."
+
+    # Permissies voor de downloads map
+    sudo chown -R 1000:1000 "${downloader_dir}/downloads"
+    echo "-> Permissies voor downloader ingesteld."
+}
+
+
 backup_n8n() {
     echo "--- 💾 n8n Backup Modus ---"
     local backup_dir="./backups/n8n/$(date +%F_%H-%M-%S)"
@@ -92,6 +635,9 @@ reset_service() {
 
     # Map service namen naar de bijbehorende mappen
     case "$service_name" in
+        "downloader")
+            paths_to_delete=("./apps/downloader/")
+            ;;
         "database")
             paths_to_delete=("./database/data/" "./database/chroma/")
             # Meerdere containers hangen van de database af, dus we resetten ook chromadb
@@ -177,6 +723,10 @@ reset_full_project() {
 }
 
 case "$1" in
+    --downloader)
+        setup_downloader
+        exit 0
+        ;;
     --backup)
         backup_n8n
         exit 0
@@ -212,6 +762,11 @@ mkdir -p ./apps/nextcloud/data
 mkdir -p ./apps/obsidian/notes
 mkdir -p ./apps/obsidian/templates 
 mkdir -p ./automation/homeassistant
+# Downloader app mappen
+# mkdir -p ./apps/downloader/templates
+# mkdir -p ./apps/downloader/vendor/yt-dlp
+# mkdir -p ./apps/downloader/downloads/{videos,images,documents,other}
+# mkdir -p ./apps/downloader/config
 # mkdir -p $HOME/appdock/nextcloud/html
 touch ./automation/homeassistant/configuration.yaml
 touch ./automation/homeassistant/automations.yaml
@@ -709,6 +1264,7 @@ http:
     - 172.20.0.0/16
 EOF
 echo "-> ./automation/homeassistant/configuration.yaml aangemaakt."
+
 
 # --- De rest van je script ---
 echo "[3/4] Correcte permissies instellen..."
