@@ -150,11 +150,24 @@ services:
   # ===================================================================
   #  3. CUSTOM APPS (Applicaties die je zelf bouwt)
   # ===================================================================
+  downloader:
+    build: ./apps/downloader
+    container_name: plongo_downloader
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - DOWNLOADER_BEARER_TOKEN=${DOWNLOADER_BEARER_TOKEN}
+      - REDIS_HOST=redis
+    volumes:
+      - ./apps/downloader/downloads:/downloads
+      - ./apps/downloader/config:/config
+    networks:
+      - plongo-network
+
   obsidian:
     build: ./apps/obsidian
     restart: unless-stopped
-    # ports:
-    #   - "5001:5000"
     volumes:
       - ./apps/obsidian:/notes
     environment:
