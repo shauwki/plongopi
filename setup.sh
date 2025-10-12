@@ -59,12 +59,14 @@ EOF
 
     # Maak downloader.py aan
     cat > ./apps/downloader/downloader.py << 'EOF'
-import subprocess
 import os
-import shutil
+import re
 import glob
 import json
+import uuid
+import shutil
 import platform
+import subprocess
 from pathlib import Path
 
 # Detecteer OS en kies de juiste executable
@@ -75,6 +77,18 @@ if OS_TYPE == "Linux":
     YT_DLP_EXEC = os.path.join(os.getcwd(), 'vendor/yt-dlp/yt-dlp_linux')
 elif OS_TYPE == "Darwin": # macOS
     YT_DLP_EXEC = os.path.join(os.getcwd(), 'vendor/yt-dlp/yt-dlp_macos')
+
+def sanitize_filename(name: str) -> str:
+    """Zet een string om naar een veilige bestandsnaam."""
+    # 1. Converteer naar kleine letters
+    name = name.lower()
+    # 2. Verwijder alle tekens die geen letter, cijfer, spatie of koppelteken zijn
+    name = re.sub(r'[^\w\s-]', '', name)
+    # 3. Vervang een of meerdere spaties/koppeltekens door een enkel koppelteken
+    name = re.sub(r'[\s_]+', '-', name)
+    # 4. Verwijder eventuele koppeltekens aan het begin of einde
+    name = name.strip('-')
+    return name
 
 def get_output_subdirectory(final_output_path):
     """Bepaalt de juiste submap op basis van de bestandsextensie."""
@@ -110,7 +124,8 @@ def download_video(url, base_output_dir, redis_client, task_id):
     if not ffmpeg_exec:
         return {'success': False, 'error': "ffmpeg is niet geïnstalleerd in de container."}
 
-    temp_dir = os.path.join(base_output_dir, "temp_download")
+    # temp_dir = os.path.join(base_output_dir, "temp_download")
+    temp_dir = os.path.join('/tmp', str(uuid.uuid4()))
     
     try:
         def update_status(status_message):
@@ -138,9 +153,16 @@ def download_video(url, base_output_dir, redis_client, task_id):
             base_command.extend(['--cookies', temp_cookie_jar])
         
         update_status('fetching_metadata')
+        
         info_command = base_command + ['--dump-json', url]
         metadata = json.loads(subprocess.check_output(info_command))
-        video_title = metadata.get('title', 'downloaded_video')
+        
+        # --- STAP 3: GEBRUIK DE SANITIZE FUNCTIE ---
+        original_title = metadata.get('title', 'downloaded_video')
+        safe_title = sanitize_filename(original_title) # Maak een veilige versie voor de bestandsnaam
+        
+        print(f"  -> Originele titel: {original_title}")
+        print(f"  -> Veilige bestandsnaam: {safe_title}")
 
         update_status('downloading')
         command_dl = base_command + ['-f', 'bestvideo+bestaudio/best', '-k', '-o', os.path.join(temp_dir, 'media.%(ext)s'), url]
@@ -154,7 +176,7 @@ def download_video(url, base_output_dir, redis_client, task_id):
             input_file = merged_file[0] if merged_file else video_parts[0]
             audio_input_args = ['-i', audio_parts[0]] if audio_parts else []
             
-            intermediate_output_path = os.path.join(temp_dir, f"{video_title}.mp4")
+            intermediate_output_path = os.path.join(temp_dir, f"{safe_title}.mp4")
             
             command_reencode = [ffmpeg_exec, '-i', input_file] + audio_input_args + [
                 '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
@@ -169,7 +191,7 @@ def download_video(url, base_output_dir, redis_client, task_id):
         target_subdir = get_output_subdirectory(final_file_to_move)
         final_destination_dir = os.path.join(base_output_dir, target_subdir)
         os.makedirs(final_destination_dir, exist_ok=True)
-        final_filename = f"{video_title}{Path(final_file_to_move).suffix}"
+        final_filename = f"{safe_title}{Path(final_file_to_move).suffix}"
         final_filepath = os.path.join(final_destination_dir, final_filename)
         shutil.move(final_file_to_move, final_filepath)
         
@@ -186,7 +208,6 @@ def download_video(url, base_output_dir, redis_client, task_id):
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
             print("--- Tijdelijke bestanden opgeruimd ---")
-
 EOF
     echo "-> downloader.py aangemaakt."
 
