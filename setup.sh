@@ -3,6 +3,7 @@ set -e
 
 setup_downloader() {
     echo "--- [2/2] Service 'downloader' instellen ---"
+    local gimme_cookie="./backups/cookies.txt"
     local downloader_dir="./apps/downloader"
     local vendor_dir="${downloader_dir}/vendor/yt-dlp"
     local config_dir="${downloader_dir}/config"
@@ -19,20 +20,26 @@ setup_downloader() {
     YT_DLP_URL=""
     if [[ "$ARCH" == "x86_64" ]]; then
         echo "--> x86_64 (Intel/AMD) gedetecteerd."
-        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/nightly/download/yt-dlp_linux"
     elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
         echo "--> aarch64 (ARM) gedetecteerd (Raspberry Pi / Apple Silicon)."
-        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64"
+        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/nightly/download/yt-dlp_linux_aarch64"
     else
         echo "❌ Fout: Niet-ondersteunde architectuur: $ARCH"
         exit 1
     fi
 
     echo "-> Downloaden van de juiste yt-dlp versie..."
-    # We slaan het altijd op als 'yt-dlp_linux' zodat de Python code niet hoeft te veranderen
     curl -L "$YT_DLP_URL" -o "${vendor_dir}/yt-dlp_linux"
     chmod +x "${vendor_dir}/yt-dlp_linux"
     echo "--> yt-dlp gedownload en uitvoerbaar gemaakt."
+
+    echo "-> Controleren op aanwezigheid van 🍪 in backups... 🧐"
+    if [ -f "$gimme_cookie" ]; then
+        echo "--> 🤨 cookies.txt gevonden in ./backups. Kopiëren naar de downloader config..."    
+        cp "$gimme_cookie" "${config_dir}/cookies.txt"
+        echo "--> ✅ cookies.txt succesvol gekopieerd."
+    fi
 
     # Maak Dockerfile aan
     cat > ./apps/downloader/Dockerfile << 'EOF'
