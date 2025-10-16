@@ -159,6 +159,7 @@ services:
     environment:
       - DOWNLOADER_BEARER_TOKEN=${DOWNLOADER_BEARER_TOKEN}
       - REDIS_HOST=redis
+      - NODE_OPTIONS=--max-old-space-size=3072
     volumes:
       - ./apps/downloader/downloads:/downloads
       - ./apps/downloader/config:/config
