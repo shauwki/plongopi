@@ -18,3 +18,7 @@ apps/*
 automation/*
 database/*
 backups/*
+
+.claude/
+CLAUDE.md
+.gitignore
