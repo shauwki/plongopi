@@ -1,6 +1,6 @@
 services:
   # ===================================================================
-  #  1. INFRASTRUCTUUR (De basis van je stack)
+  #  1. BASE
   # ===================================================================
   database:
     image: pgvector/pgvector:pg15
@@ -48,6 +48,29 @@ services:
       timeout: 5s
       retries: 3
 
+  chromadb:
+    image: chromadb/chroma
+    container_name: plongo_chromadb
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./database/chroma:/chroma/.chroma/index
+    networks:
+      - plongo-network
+
+  adminer:
+    image: adminer
+    container_name: plongo_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - plongo-network
+    depends_on:
+      database:
+        condition: service_healthy
+
   mqtt:
     image: eclipse-mosquitto:latest
     container_name: plongo_mqtt
@@ -67,7 +90,7 @@ services:
       - plongo-network
 
   # ===================================================================
-  #  2. APPLICATIES (De hoofdapplicaties van je stack)
+  #  2. BASE APPS
   # ===================================================================
   n8n:
     image: n8nio/n8n
@@ -127,8 +150,8 @@ services:
         condition: service_healthy
     volumes:
       - ./apps/nextcloud/html:/var/www/html
-      - ./apps/nextcloud/data:/var/www/html/data # verander het naar deze regel als je de data in de omgeving wilt houden
-      # - /root/devki/nextcloud:/var/www/html/data # kan anders path zijn voor jou
+      - ./apps/nextcloud/data:/var/www/html/data 
+      # - /root/devki/nextcloud:/var/www/html/data
     networks:
       - plongo-network
 
@@ -148,7 +171,7 @@ services:
       retries: 5
 
   # ===================================================================
-  #  3. CUSTOM APPS (Applicaties die je zelf bouwt)
+  #  3. OTHER APPS
   # ===================================================================
   downloader:
     build: ./apps/downloader
@@ -166,16 +189,6 @@ services:
     networks:
       - plongo-network
 
-  obsidian:
-    build: ./apps/obsidian
-    restart: unless-stopped
-    volumes:
-      - ./apps/obsidian:/notes
-    environment:
-      - OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}
-    networks:
-      - plongo-network
-
   web:
     build: ./apps/web
     container_name: plongo_website
@@ -186,33 +199,7 @@ services:
       - plongo-network
 
   # ===================================================================
-  #  4. TOOLS & SUPPORTING SERVICES
-  # ===================================================================
-  chromadb:
-    image: chromadb/chroma
-    container_name: plongo_chromadb
-    restart: unless-stopped
-    ports:
-      - "8001:8000"
-    volumes:
-      - ./database/chroma:/chroma/.chroma/index
-    networks:
-      - plongo-network
-
-  adminer:
-    image: adminer
-    container_name: plongo_adminer
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    networks:
-      - plongo-network
-    depends_on:
-      database:
-        condition: service_healthy
-
-  # ===================================================================
-  #  5. GATEWAY (De toegangspoort tot je stack)
+  #  4. NETWORKING
   # ===================================================================
   cloudflared:
     image: cloudflare/cloudflared:latest
