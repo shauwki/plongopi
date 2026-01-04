@@ -20,17 +20,17 @@ setup_downloader() {
     YT_DLP_URL=""
     if [[ "$ARCH" == "x86_64" ]]; then
         echo "--> x86_64 (Intel/AMD) gedetecteerd."
-        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/nightly/download/yt-dlp_linux"
+        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" # ? < fix this brev, find a 64-bit specific url
     elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
         echo "--> aarch64 (ARM) gedetecteerd (Raspberry Pi / Apple Silicon)."
-        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/nightly/download/yt-dlp_linux_aarch64"
+        YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
     else
         echo "❌ Fout: Niet-ondersteunde architectuur: $ARCH"
         exit 1
     fi
 
     echo "-> Downloaden van de juiste yt-dlp versie..."
-    curl -L "$YT_DLP_URL" -o "${vendor_dir}/yt-dlp_linux"
+    wget -O "${vendor_dir}/yt-dlp_linux" "$YT_DLP_URL" 
     chmod +x "${vendor_dir}/yt-dlp_linux"
     echo "--> yt-dlp gedownload en uitvoerbaar gemaakt."
 
@@ -1344,7 +1344,6 @@ sudo chown -R 1000:1000 ./backups/n8n
 sudo chown -R 1000:1000 ./automation/n8n/
 sudo chown -R 1000:1000 ./apps/obsidian/
 sudo chown -R 33:33 ./apps/web/public/html/ 
-# sudo chown -R 33:33 $HOME/appdock/nextcloud/html
 sudo chown -R 33:33 ./apps/nextcloud/html/
 sudo chown -R 1883:1883 ./automation/mqtt/data/
 sudo chown -R 1883:1883 ./automation/mqtt/log/
